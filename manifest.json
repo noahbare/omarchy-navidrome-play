@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "nbare.navidrome-play",
+  "name": "Navidrome Play",
+  "version": "0.1.0",
+  "author": "nbare",
+  "license": "MIT",
+  "description": "Search your Navidrome library and start playback -- an album, a song, or an artist's similar-music mix -- streamed locally via mpv, with transport controls right in the bar.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Panel.qml" },
+  "barWidget": {
+    "displayName": "Navidrome Play",
+    "description": "Search artists, albums, and songs on Navidrome. Play an album, a song, or an artist's similar-music mix, streamed locally through mpv. Transport controls and progress live in the popout.",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "mixCount": 40,
+      "statusRefreshSec": 2
+    },
+    "schema": [
+      {
+        "key": "mixCount",
+        "type": "integer",
+        "label": "Similar-mix track count",
+        "min": 5,
+        "max": 100,
+        "step": 5,
+        "defaultValue": 40
+      },
+      {
+        "key": "statusRefreshSec",
+        "type": "integer",
+        "label": "Now-playing refresh (seconds)",
+        "min": 1,
+        "max": 10,
+        "step": 1,
+        "defaultValue": 2
+      }
+    ]
+  }
+}
