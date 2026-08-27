@@ -40,6 +40,7 @@ Item {
       counts[a.artistId] += 1
     }
     return order.map(function(id) { return {id: id, name: names[id], count: counts[id]} })
+                .sort(function(x, y) { return y.count - x.count })
   }
   readonly property var favoriteArtists: {
     var order = [], counts = {}, names = {}
@@ -50,6 +51,7 @@ Item {
       counts[s.artistId] += 1
     }
     return order.map(function(id) { return {id: id, name: names[id], count: counts[id]} })
+                .sort(function(x, y) { return y.count - x.count })
   }
 
   // ---- now-playing state (mirrors status.py) ----
