@@ -18,9 +18,13 @@ Item {
   property var albums: []
   property var songs: []
 
-  // ---- recently played (the default view before you type anything) ----
+  // ---- home-screen sections (the default view before you type anything) ----
   property var recentAlbums: []
   property string recentError: ""
+  property var favoriteSongs: []
+  property string favoritesError: ""
+  property var playlists: []
+  property string playlistsError: ""
 
   // ---- now-playing state (mirrors status.py) ----
   property bool loaded: false
@@ -100,6 +104,50 @@ Item {
     if (recentProc.running) return
     recentProc.command = ["bash", pluginDir + "/backend.sh", "recent"]
     recentProc.running = true
+  }
+
+  Process {
+    id: favoritesProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var raw = this.text ? this.text.trim() : ""
+        try {
+          var d = JSON.parse(raw)
+          if (d.ok) { svc.favoriteSongs = d.songs || []; svc.favoritesError = "" }
+          else { svc.favoriteSongs = []; svc.favoritesError = d.error || "failed" }
+        } catch (e) {
+          svc.favoriteSongs = []; svc.favoritesError = "unparseable"
+        }
+      }
+    }
+  }
+
+  function loadFavorites() {
+    if (favoritesProc.running) return
+    favoritesProc.command = ["bash", pluginDir + "/backend.sh", "favorites"]
+    favoritesProc.running = true
+  }
+
+  Process {
+    id: playlistsProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var raw = this.text ? this.text.trim() : ""
+        try {
+          var d = JSON.parse(raw)
+          if (d.ok) { svc.playlists = d.playlists || []; svc.playlistsError = "" }
+          else { svc.playlists = []; svc.playlistsError = d.error || "failed" }
+        } catch (e) {
+          svc.playlists = []; svc.playlistsError = "unparseable"
+        }
+      }
+    }
+  }
+
+  function loadPlaylists() {
+    if (playlistsProc.running) return
+    playlistsProc.command = ["bash", pluginDir + "/backend.sh", "playlists"]
+    playlistsProc.running = true
   }
 
   Process {

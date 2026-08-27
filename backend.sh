@@ -5,12 +5,15 @@
 # as scripts, not QML, so the whole thing can be run and diffed over SSH.
 #
 #   backend.sh search <query>                         search artists/albums/songs
-#   backend.sh play song|album|mix|artist <id> [count]  replace the queue and play
-#     song   -- just that track          mix    -- similar-artist radio (needs count)
-#     album  -- that album, track order  artist -- every album, in album order
+#   backend.sh play song|album|mix|artist|playlist <id> [count]  replace the queue and play
+#     song     -- just that track          mix      -- similar-artist radio (needs count)
+#     album    -- that album, track order  artist   -- every album, in album order
+#     playlist -- that playlist, in order
 #   backend.sh control playpause|next|previous|stop
 #   backend.sh star|unstar <songId>
 #   backend.sh recent                                  recently played albums
+#   backend.sh favorites                                starred albums
+#   backend.sh playlists                                saved playlists
 #   backend.sh status                                  what mpv is playing right now
 #
 # Playback happens LOCALLY: this plugin owns and drives its own mpv instance,
@@ -34,7 +37,7 @@ case "${1:-status}" in
     exec python3 "$DIR/search.py" "$2"
     ;;
   play)
-    [ $# -eq 3 ] || [ $# -eq 4 ] || { printf '{"ok":false,"error":"usage: play <song|album|mix|artist> <id> [count]"}\n'; exit 1; }
+    [ $# -eq 3 ] || [ $# -eq 4 ] || { printf '{"ok":false,"error":"usage: play <song|album|mix|artist|playlist> <id> [count]"}\n'; exit 1; }
     exec python3 "$DIR/play.py" "${@:2}"
     ;;
   control)
@@ -47,6 +50,12 @@ case "${1:-status}" in
     ;;
   recent)
     exec python3 "$DIR/recent.py"
+    ;;
+  favorites)
+    exec python3 "$DIR/favorites.py"
+    ;;
+  playlists)
+    exec python3 "$DIR/playlists.py"
     ;;
   status)
     exec python3 "$DIR/status.py"

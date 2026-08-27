@@ -132,9 +132,9 @@ def ensure_mpv():
 
 def main():
     if len(sys.argv) not in (3, 4):
-        out(False, error="usage: play.py <song|album|mix> <id> [count]")
+        out(False, error="usage: play.py <song|album|mix|artist|playlist> <id> [count]")
     kind, item_id = sys.argv[1], sys.argv[2]
-    if kind not in ("song", "album", "mix", "artist"):
+    if kind not in ("song", "album", "mix", "artist", "playlist"):
         out(False, error="unknown kind %r" % kind)
 
     try:
@@ -179,7 +179,7 @@ def main():
             songs = (body.get("similarSongs2") or {}).get("song") or []
             if not songs:
                 out(False, error="no similar songs found for this artist")
-        else:  # artist: every song across every album, in album order
+        elif kind == "artist":  # every song across every album, in album order
             artist_body = subsonic.call(base, cfg, "getArtist", "id=%s" % urllib.parse.quote(item_id),
                                         timeout=timeout)
             albums = (artist_body.get("artist") or {}).get("album") or []
@@ -195,6 +195,12 @@ def main():
                 songs.extend((album_body.get("album") or {}).get("song") or [])
             if not songs:
                 out(False, error="no songs found across this artist's albums")
+        else:  # playlist
+            body = subsonic.call(base, cfg, "getPlaylist", "id=%s" % urllib.parse.quote(item_id),
+                                 timeout=timeout)
+            songs = (body.get("playlist") or {}).get("entry") or []
+            if not songs:
+                out(False, error="playlist is empty")
     except subsonic.AuthError:
         out(False, error="auth failed")
     except Exception as e:
