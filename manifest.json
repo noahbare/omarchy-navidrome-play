@@ -6,6 +6,10 @@
   "author": "nbare",
   "license": "MIT",
   "description": "Search your Navidrome library and start playback -- an album, a song, or an artist's similar-music mix -- streamed locally via mpv, with transport controls right in the bar.",
+  "keywords": [
+    "navidrome", "subsonic", "music", "player", "mpv", "streaming",
+    "search", "playlist", "favorites", "artist mix", "media"
+  ],
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "Panel.qml" },
   "barWidget": {

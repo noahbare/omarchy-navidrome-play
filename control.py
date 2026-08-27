@@ -3,8 +3,8 @@
 
     control.py <playpause|next|previous|stop>
 
-Unlike ky.navidrome-remote, this never talks to a remote client -- mpv is
-ours, spawned by play.py, so control is a direct IPC command.
+mpv is ours, spawned by play.py, so control is a direct IPC command rather
+than a remote-control call to some other client.
 """
 
 import json

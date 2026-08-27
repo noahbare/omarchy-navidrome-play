@@ -1,8 +1,6 @@
 // Bar button + popout: search Navidrome, start playback (song, album, an
 // artist's similar-music mix, or a saved playlist) through a local mpv
-// instance this plugin owns, then control it. Structure follows the sibling
-// ky.navidrome-remote plugin, the working reference for this machine's
-// bar-widget contract.
+// instance this plugin owns, then control it.
 //
 // Layout, top to bottom: title, now-playing (pinned here so you never have
 // to scroll past search results to reach it), search box, then either the
@@ -32,9 +30,8 @@ Panel {
   ipcTarget: "nbare.navidrome-play"
   manageIpc: false
 
-  // Always visible: unlike ky.navidrome-remote (a status display that hides
-  // when there's nothing to show), this is an action launcher -- the icon is
-  // how you get to the search box in the first place.
+  // Always visible: this is an action launcher, not a status display -- the
+  // icon is how you get to the search box in the first place.
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 

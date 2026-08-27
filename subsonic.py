@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Shared Subsonic plumbing: config, endpoint selection, authenticated calls.
-
-Deliberately duplicated from ky.navidrome-remote's subsonic.py rather than
-imported across plugin directories -- each plugin is its own self-contained,
-ssh-diffable unit. Same config file though: both plugins point at the same
-Navidrome server, and making the user maintain two copies of the same
-credentials would be its own kind of bug.
-"""
+"""Shared Subsonic plumbing: config, endpoint selection, authenticated calls."""
 
 import hashlib
 import json

@@ -18,9 +18,9 @@
 #
 # Playback happens LOCALLY: this plugin owns and drives its own mpv instance,
 # streaming from Navidrome's Subsonic API. It does not remote-control any
-# other client (that's ky.navidrome-remote's job).
+# other client.
 #
-# Config: ~/.config/omarchy-navidrome/config.json (shared with ky.navidrome-remote)
+# Config: ~/.config/omarchy-navidrome/config.json
 #   {"url":"http://host:4533","public_url":"https://navidrome.example.com",
 #    "user":"...","password":"..."}
 set -uo pipefail
