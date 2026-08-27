@@ -43,6 +43,7 @@ Panel {
 
   onOpenedChanged: {
     if (opened) {
+      svc.loadRecent()
       Qt.callLater(function() {
         if (root.opened) searchField.forceActiveFocus()
       })
@@ -155,7 +156,31 @@ Panel {
             font.family: root.fontFamily
           }
 
-          // ---- artists: one action each -- start the similar-music mix ----
+          // ---- recently played: the default view before you type anything ----
+          ColumnLayout {
+            Layout.fillWidth: true
+            visible: searchField.text.trim() === "" && svc.recentAlbums.length > 0
+            spacing: Style.space(2)
+
+            PanelSectionHeader { text: "Recently Played" }
+
+            Repeater {
+              model: svc.recentAlbums
+              delegate: ResultRow {
+                required property var modelData
+                Layout.fillWidth: true
+                title: modelData.name
+                subtitle: modelData.artist
+                busy: svc.busy === "play/" + modelData.id
+                foreground: root.foreground
+                dim: root.dim
+                fontFamily: root.fontFamily
+                onActivated: svc.play("album", modelData.id)
+              }
+            }
+          }
+
+          // ---- artists: two actions each -- mix, or the whole discography ----
           ColumnLayout {
             Layout.fillWidth: true
             visible: svc.artists.length > 0
@@ -165,16 +190,71 @@ Panel {
 
             Repeater {
               model: svc.artists
-              delegate: ResultRow {
+              delegate: Rectangle {
+                id: artistRow
                 required property var modelData
+                readonly property bool rowBusy: svc.busy === "play/" + modelData.id
                 Layout.fillWidth: true
-                title: modelData.name
-                subtitle: modelData.albumCount + (modelData.albumCount === 1 ? " album" : " albums") + " · similar-artist mix"
-                busy: svc.busy === "play/" + modelData.id
-                foreground: root.foreground
-                dim: root.dim
-                fontFamily: root.fontFamily
-                onActivated: svc.play("mix", modelData.id)
+                height: artistContent.implicitHeight + Style.space(10)
+                radius: Style.cornerRadius
+                color: "transparent"
+
+                RowLayout {
+                  id: artistContent
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.leftMargin: Style.space(6)
+                  anchors.rightMargin: Style.space(6)
+                  spacing: Style.space(8)
+
+                  ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 0
+                    Text {
+                      Layout.fillWidth: true
+                      text: artistRow.modelData.name
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      elide: Text.ElideRight
+                    }
+                    Text {
+                      Layout.fillWidth: true
+                      text: artistRow.modelData.albumCount + (artistRow.modelData.albumCount === 1 ? " album" : " albums")
+                      color: root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
+
+                  Text {
+                    visible: artistRow.rowBusy
+                    text: "working…"
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  RowLayout {
+                    visible: !artistRow.rowBusy
+                    spacing: Style.space(4)
+
+                    ActionChip {
+                      label: "Mix"
+                      foreground: root.foreground
+                      dim: root.dim
+                      fontFamily: root.fontFamily
+                      onClicked: svc.play("mix", artistRow.modelData.id)
+                    }
+                    ActionChip {
+                      label: "All albums"
+                      foreground: root.foreground
+                      dim: root.dim
+                      fontFamily: root.fontFamily
+                      onClicked: svc.play("artist", artistRow.modelData.id)
+                    }
+                  }
+                }
               }
             }
           }
@@ -321,6 +401,14 @@ Panel {
 
               Item { Layout.fillWidth: true }
 
+              PanelActionButton {
+                iconText: svc.track.starred ? "󰋑" : "󰋕"
+                tooltipText: svc.track.starred ? "Remove from favourites" : "Add to favourites"
+                foreground: svc.track.starred ? root.urgent : root.dim
+                hoverColor: root.urgent
+                enabled: svc.busy === "" && !!svc.track.id
+                onClicked: svc.toggleStar(svc.track.id, !!svc.track.starred)
+              }
               PanelActionButton {
                 iconText: "󰒮"
                 tooltipText: "Previous"

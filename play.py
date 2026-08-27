@@ -99,6 +99,11 @@ def song_brief(base, cfg, timeout, s):
         "album": s.get("album") or "",
         "duration": int(s.get("duration") or 0),
         "cover": cover_path(base, cfg, s.get("coverArt"), timeout),
+        # Subsonic includes this key (its value is a timestamp) only when the
+        # song IS starred -- free, since we already fetched this song's full
+        # metadata to build the queue. Saves status.py (polled every couple
+        # of seconds) from ever having to touch the network for it.
+        "starred": "starred" in s,
     }
 
 
@@ -129,7 +134,7 @@ def main():
     if len(sys.argv) not in (3, 4):
         out(False, error="usage: play.py <song|album|mix> <id> [count]")
     kind, item_id = sys.argv[1], sys.argv[2]
-    if kind not in ("song", "album", "mix"):
+    if kind not in ("song", "album", "mix", "artist"):
         out(False, error="unknown kind %r" % kind)
 
     try:
@@ -161,7 +166,7 @@ def main():
             songs = album.get("song") or []
             if not songs:
                 out(False, error="album is empty")
-        else:  # mix
+        elif kind == "mix":
             count = MIX_DEFAULT_COUNT
             if len(sys.argv) == 4:
                 try:
@@ -174,6 +179,22 @@ def main():
             songs = (body.get("similarSongs2") or {}).get("song") or []
             if not songs:
                 out(False, error="no similar songs found for this artist")
+        else:  # artist: every song across every album, in album order
+            artist_body = subsonic.call(base, cfg, "getArtist", "id=%s" % urllib.parse.quote(item_id),
+                                        timeout=timeout)
+            albums = (artist_body.get("artist") or {}).get("album") or []
+            if not albums:
+                out(False, error="artist has no albums")
+            songs = []
+            for alb in albums:
+                alb_id = alb.get("id")
+                if not alb_id:
+                    continue
+                album_body = subsonic.call(base, cfg, "getAlbum", "id=%s" % urllib.parse.quote(alb_id),
+                                           timeout=timeout)
+                songs.extend((album_body.get("album") or {}).get("song") or [])
+            if not songs:
+                out(False, error="no songs found across this artist's albums")
     except subsonic.AuthError:
         out(False, error="auth failed")
     except Exception as e:

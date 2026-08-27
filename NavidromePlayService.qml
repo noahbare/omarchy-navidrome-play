@@ -18,6 +18,10 @@ Item {
   property var albums: []
   property var songs: []
 
+  // ---- recently played (the default view before you type anything) ----
+  property var recentAlbums: []
+  property string recentError: ""
+
   // ---- now-playing state (mirrors status.py) ----
   property bool loaded: false
   property bool paused: true
@@ -74,6 +78,28 @@ Item {
     svc.searching = true
     searchProc.command = ["bash", pluginDir + "/backend.sh", "search", query]
     searchProc.running = true
+  }
+
+  Process {
+    id: recentProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var raw = this.text ? this.text.trim() : ""
+        try {
+          var d = JSON.parse(raw)
+          if (d.ok) { svc.recentAlbums = d.albums || []; svc.recentError = "" }
+          else { svc.recentAlbums = []; svc.recentError = d.error || "failed" }
+        } catch (e) {
+          svc.recentAlbums = []; svc.recentError = "unparseable"
+        }
+      }
+    }
+  }
+
+  function loadRecent() {
+    if (recentProc.running) return
+    recentProc.command = ["bash", pluginDir + "/backend.sh", "recent"]
+    recentProc.running = true
   }
 
   Process {
@@ -153,6 +179,28 @@ Item {
     actionError = ""
     controlProc.command = ["bash", pluginDir + "/backend.sh", "control", action]
     controlProc.running = true
+  }
+
+  Process {
+    id: starProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var raw = this.text ? this.text.trim() : ""
+        var good = false, msg = "failed"
+        try { var d = JSON.parse(raw); good = !!d.ok; msg = d.error || "failed" } catch (e) {}
+        svc.actionError = good ? "" : String(msg)
+        svc.busy = ""
+        svc.refreshStatus()
+      }
+    }
+  }
+
+  function toggleStar(songId, currentlyStarred) {
+    if (starProc.running || busy !== "" || !songId) return
+    busy = "star/" + songId
+    actionError = ""
+    starProc.command = ["bash", pluginDir + "/backend.sh", currentlyStarred ? "unstar" : "star", String(songId)]
+    starProc.running = true
   }
 
   Timer {

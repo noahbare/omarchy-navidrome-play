@@ -5,8 +5,12 @@
 # as scripts, not QML, so the whole thing can be run and diffed over SSH.
 #
 #   backend.sh search <query>                         search artists/albums/songs
-#   backend.sh play song|album|mix <id> [count]        replace the queue and play
+#   backend.sh play song|album|mix|artist <id> [count]  replace the queue and play
+#     song   -- just that track          mix    -- similar-artist radio (needs count)
+#     album  -- that album, track order  artist -- every album, in album order
 #   backend.sh control playpause|next|previous|stop
+#   backend.sh star|unstar <songId>
+#   backend.sh recent                                  recently played albums
 #   backend.sh status                                  what mpv is playing right now
 #
 # Playback happens LOCALLY: this plugin owns and drives its own mpv instance,
@@ -30,12 +34,19 @@ case "${1:-status}" in
     exec python3 "$DIR/search.py" "$2"
     ;;
   play)
-    [ $# -eq 3 ] || [ $# -eq 4 ] || { printf '{"ok":false,"error":"usage: play <song|album|mix> <id> [count]"}\n'; exit 1; }
+    [ $# -eq 3 ] || [ $# -eq 4 ] || { printf '{"ok":false,"error":"usage: play <song|album|mix|artist> <id> [count]"}\n'; exit 1; }
     exec python3 "$DIR/play.py" "${@:2}"
     ;;
   control)
     [ $# -eq 2 ] || { printf '{"ok":false,"error":"usage: control <playpause|next|previous|stop>"}\n'; exit 1; }
     exec python3 "$DIR/control.py" "$2"
+    ;;
+  star|unstar)
+    [ $# -eq 2 ] || { printf '{"ok":false,"error":"usage: star|unstar <songId>"}\n'; exit 1; }
+    exec python3 "$DIR/star.py" "$1" "$2"
+    ;;
+  recent)
+    exec python3 "$DIR/recent.py"
     ;;
   status)
     exec python3 "$DIR/status.py"
