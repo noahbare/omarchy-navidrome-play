@@ -29,6 +29,14 @@ COVER_CACHE_MAX = 100
 SOCK_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "nbare-navidrome-play-mpv.sock")
 MIX_DEFAULT_COUNT = 40
 
+# subsonic.pick_endpoint() hands back a timeout sized for cheap polls (ping,
+# getNowPlaying) -- fine for the probe itself, much too tight for the calls
+# below. getSimilarSongs2 in particular has to compute a mix server-side and
+# measured 4.5s against this Navidrome for a mid-catalog artist; getAlbum and
+# getSong are normally fast DB lookups but get the same allowance for safety.
+BUILD_TIMEOUT_LAN = 20
+BUILD_TIMEOUT_PUBLIC = 30
+
 
 def out(ok, **kw):
     print(json.dumps({"ok": ok, **kw}))
@@ -132,11 +140,13 @@ def main():
         out(False, error="bad config")
 
     try:
-        _which, base, timeout, _probe = subsonic.pick_endpoint(cfg)
+        which, base, _probe_timeout, _probe = subsonic.pick_endpoint(cfg)
     except subsonic.AuthError:
         out(False, error="auth failed")
     except Exception:
         out(False, error="unreachable")
+
+    timeout = BUILD_TIMEOUT_PUBLIC if which == "public" else BUILD_TIMEOUT_LAN
 
     try:
         if kind == "song":
