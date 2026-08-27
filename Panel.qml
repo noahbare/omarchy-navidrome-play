@@ -75,7 +75,9 @@ Panel {
   readonly property var sectionOrder: svc.loaded ? ["buttons", "results"] : ["results"]
 
   property bool recentExpanded: false
+  property bool recentArtistsExpanded: false
   property bool favoritesExpanded: false
+  property bool favoriteArtistsExpanded: false
   property bool playlistsExpanded: false
 
   readonly property bool showingRecent: searchField.text.trim() === ""
@@ -87,10 +89,20 @@ Panel {
         if (root.recentExpanded) for (var i = 0; i < svc.recentAlbums.length; i++)
           rows.push({kind: "album", data: svc.recentAlbums[i]})
       }
+      if (svc.recentArtists.length > 0) {
+        rows.push({kind: "header", section: "recentArtists"})
+        if (root.recentArtistsExpanded) for (var ra = 0; ra < svc.recentArtists.length; ra++)
+          rows.push({kind: "artist", data: svc.recentArtists[ra]})
+      }
       if (svc.favoriteSongs.length > 0) {
         rows.push({kind: "header", section: "favorites"})
         if (root.favoritesExpanded) for (var f = 0; f < svc.favoriteSongs.length; f++)
           rows.push({kind: "song", data: svc.favoriteSongs[f]})
+      }
+      if (svc.favoriteArtists.length > 0) {
+        rows.push({kind: "header", section: "favoriteArtists"})
+        if (root.favoriteArtistsExpanded) for (var fa = 0; fa < svc.favoriteArtists.length; fa++)
+          rows.push({kind: "artist", data: svc.favoriteArtists[fa]})
       }
       if (svc.playlists.length > 0) {
         rows.push({kind: "header", section: "playlists"})
@@ -127,7 +139,9 @@ Panel {
 
   function toggleSection(section) {
     if (section === "recent") recentExpanded = !recentExpanded
+    else if (section === "recentArtists") recentArtistsExpanded = !recentArtistsExpanded
     else if (section === "favorites") favoritesExpanded = !favoritesExpanded
+    else if (section === "favoriteArtists") favoriteArtistsExpanded = !favoriteArtistsExpanded
     else if (section === "playlists") playlistsExpanded = !playlistsExpanded
     // Keep the cursor pinned to this header regardless of how many rows
     // just appeared/disappeared above or below it in the flat list.
@@ -548,6 +562,46 @@ Panel {
             }
           }
 
+          // ---- recent artists: derived from Recently Played, collapsed by default ----
+          ColumnLayout {
+            Layout.fillWidth: true
+            visible: root.showingRecent && svc.recentArtists.length > 0
+            spacing: Style.space(2)
+
+            HomeSectionHeader {
+              label: "Recent Artists"
+              count: svc.recentArtists.length
+              expanded: root.recentArtistsExpanded
+              hasCursor: root.rowHasCursor(root.sectionHeaderIndex("recentArtists"))
+              foreground: root.foreground
+              dim: root.dim
+              fontFamily: root.fontFamily
+              onToggled: root.toggleSection("recentArtists")
+              onHovered: function(isHovered) { if (isHovered) root.setResultCursor(root.sectionHeaderIndex("recentArtists")) }
+            }
+
+            Repeater {
+              model: root.recentArtistsExpanded ? svc.recentArtists : []
+              delegate: ArtistRow {
+                required property var modelData
+                required property int index
+                readonly property int flatIndex: root.sectionRowIndex("recentArtists", index)
+                name: modelData.name
+                subtitle: modelData.count === 1 ? "1 recent album" : (modelData.count + " recent albums")
+                busy: svc.busy === "play/" + modelData.id
+                cursorOnRow: root.rowHasCursor(flatIndex)
+                chipCursor: root.rowHasCursor(flatIndex) ? root.chipIndex : -1
+                foreground: root.foreground
+                dim: root.dim
+                fontFamily: root.fontFamily
+                onMixActivated: svc.play("mix", modelData.id)
+                onAllAlbumsActivated: svc.play("artist", modelData.id)
+                onRowHovered: function(isHovered) { if (isHovered) root.setResultCursor(flatIndex) }
+                onChipHovered: function(chip, isHovered) { if (isHovered) root.setChipCursor(flatIndex, chip) }
+              }
+            }
+          }
+
           // ---- favorites: starred songs, collapsed by default ----
           ColumnLayout {
             Layout.fillWidth: true
@@ -581,6 +635,46 @@ Panel {
                 fontFamily: root.fontFamily
                 onActivated: svc.play("song", modelData.id)
                 onHovered: function(isHovered) { if (isHovered) root.setResultCursor(root.sectionRowIndex("favorites", index)) }
+              }
+            }
+          }
+
+          // ---- favorite artists: derived from Favorites, collapsed by default ----
+          ColumnLayout {
+            Layout.fillWidth: true
+            visible: root.showingRecent && svc.favoriteArtists.length > 0
+            spacing: Style.space(2)
+
+            HomeSectionHeader {
+              label: "Favorite Artists"
+              count: svc.favoriteArtists.length
+              expanded: root.favoriteArtistsExpanded
+              hasCursor: root.rowHasCursor(root.sectionHeaderIndex("favoriteArtists"))
+              foreground: root.foreground
+              dim: root.dim
+              fontFamily: root.fontFamily
+              onToggled: root.toggleSection("favoriteArtists")
+              onHovered: function(isHovered) { if (isHovered) root.setResultCursor(root.sectionHeaderIndex("favoriteArtists")) }
+            }
+
+            Repeater {
+              model: root.favoriteArtistsExpanded ? svc.favoriteArtists : []
+              delegate: ArtistRow {
+                required property var modelData
+                required property int index
+                readonly property int flatIndex: root.sectionRowIndex("favoriteArtists", index)
+                name: modelData.name
+                subtitle: modelData.count === 1 ? "1 favorite song" : (modelData.count + " favorite songs")
+                busy: svc.busy === "play/" + modelData.id
+                cursorOnRow: root.rowHasCursor(flatIndex)
+                chipCursor: root.rowHasCursor(flatIndex) ? root.chipIndex : -1
+                foreground: root.foreground
+                dim: root.dim
+                fontFamily: root.fontFamily
+                onMixActivated: svc.play("mix", modelData.id)
+                onAllAlbumsActivated: svc.play("artist", modelData.id)
+                onRowHovered: function(isHovered) { if (isHovered) root.setResultCursor(flatIndex) }
+                onChipHovered: function(chip, isHovered) { if (isHovered) root.setChipCursor(flatIndex, chip) }
               }
             }
           }
@@ -632,79 +726,21 @@ Panel {
 
             Repeater {
               model: svc.artists
-              delegate: Rectangle {
-                id: artistRow
+              delegate: ArtistRow {
                 required property var modelData
                 required property int index
-                readonly property bool rowBusy: svc.busy === "play/" + modelData.id
-                readonly property bool cursorOnRow: root.rowHasCursor(index)
-                Layout.fillWidth: true
-                height: artistContent.implicitHeight + Style.space(10)
-                radius: Style.cornerRadius
-                color: "transparent"
-                border.width: cursorOnRow ? 1 : 0
-                border.color: Util.alpha(root.foreground, 0.25)
-
-                RowLayout {
-                  id: artistContent
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  anchors.leftMargin: Style.space(6)
-                  anchors.rightMargin: Style.space(6)
-                  spacing: Style.space(8)
-
-                  ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 0
-                    Text {
-                      Layout.fillWidth: true
-                      text: artistRow.modelData.name
-                      color: root.foreground
-                      font.family: root.fontFamily
-                      elide: Text.ElideRight
-                    }
-                    Text {
-                      Layout.fillWidth: true
-                      text: artistRow.modelData.albumCount + (artistRow.modelData.albumCount === 1 ? " album" : " albums")
-                      color: root.dim
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                    }
-                  }
-
-                  Text {
-                    visible: artistRow.rowBusy
-                    text: "working…"
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-
-                  RowLayout {
-                    visible: !artistRow.rowBusy
-                    spacing: Style.space(4)
-
-                    ActionChip {
-                      label: "Mix"
-                      foreground: root.foreground
-                      dim: root.dim
-                      fontFamily: root.fontFamily
-                      hasCursor: root.chipHasCursor(artistRow.index, 0)
-                      onClicked: svc.play("mix", artistRow.modelData.id)
-                      onHovered: function(isHovered) { if (isHovered) root.setChipCursor(artistRow.index, 0) }
-                    }
-                    ActionChip {
-                      label: "All albums"
-                      foreground: root.foreground
-                      dim: root.dim
-                      fontFamily: root.fontFamily
-                      hasCursor: root.chipHasCursor(artistRow.index, 1)
-                      onClicked: svc.play("artist", artistRow.modelData.id)
-                      onHovered: function(isHovered) { if (isHovered) root.setChipCursor(artistRow.index, 1) }
-                    }
-                  }
-                }
+                name: modelData.name
+                subtitle: modelData.albumCount + (modelData.albumCount === 1 ? " album" : " albums")
+                busy: svc.busy === "play/" + modelData.id
+                cursorOnRow: root.rowHasCursor(index)
+                chipCursor: root.rowHasCursor(index) ? root.chipIndex : -1
+                foreground: root.foreground
+                dim: root.dim
+                fontFamily: root.fontFamily
+                onMixActivated: svc.play("mix", modelData.id)
+                onAllAlbumsActivated: svc.play("artist", modelData.id)
+                onRowHovered: function(isHovered) { if (isHovered) root.setResultCursor(index) }
+                onChipHovered: function(chip, isHovered) { if (isHovered) root.setChipCursor(index, chip) }
               }
             }
           }

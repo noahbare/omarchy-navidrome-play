@@ -26,6 +26,32 @@ Item {
   property var playlists: []
   property string playlistsError: ""
 
+  // Derived, not fetched: deduping the lists above by artist costs no extra
+  // network round trip, and it's the only signal this server actually has --
+  // Navidrome users star songs, essentially never whole artists, so a
+  // "favourite artists" section built on getStarred2's (near-always-empty)
+  // artist list would be dead space.
+  readonly property var recentArtists: {
+    var order = [], counts = {}, names = {}
+    for (var i = 0; i < recentAlbums.length; i++) {
+      var a = recentAlbums[i]
+      if (!a.artistId) continue
+      if (!(a.artistId in counts)) { order.push(a.artistId); names[a.artistId] = a.artist; counts[a.artistId] = 0 }
+      counts[a.artistId] += 1
+    }
+    return order.map(function(id) { return {id: id, name: names[id], count: counts[id]} })
+  }
+  readonly property var favoriteArtists: {
+    var order = [], counts = {}, names = {}
+    for (var j = 0; j < favoriteSongs.length; j++) {
+      var s = favoriteSongs[j]
+      if (!s.artistId) continue
+      if (!(s.artistId in counts)) { order.push(s.artistId); names[s.artistId] = s.artist; counts[s.artistId] = 0 }
+      counts[s.artistId] += 1
+    }
+    return order.map(function(id) { return {id: id, name: names[id], count: counts[id]} })
+  }
+
   // ---- now-playing state (mirrors status.py) ----
   property bool loaded: false
   property bool paused: true

@@ -49,6 +49,9 @@ def main():
             "title": s.get("title", ""),
             "artist": s.get("artist") or s.get("displayArtist", ""),
             "album": s.get("album", ""),
+            # Carried through so the QML side can derive a "Favorite Artists"
+            # section by deduping this list, with no extra network call.
+            "artistId": s.get("artistId", ""),
         }
         for s in songs
     ])

@@ -44,7 +44,14 @@ def main():
 
     albums = (body.get("albumList2") or {}).get("album") or []
     out(True, albums=[
-        {"id": a.get("id", ""), "name": a.get("name") or a.get("title", ""), "artist": a.get("artist", "")}
+        {
+            "id": a.get("id", ""),
+            "name": a.get("name") or a.get("title", ""),
+            "artist": a.get("artist", ""),
+            # Carried through so the QML side can derive a "Recent Artists"
+            # section by deduping this list, with no extra network call.
+            "artistId": a.get("artistId", ""),
+        }
         for a in albums
     ])
 
