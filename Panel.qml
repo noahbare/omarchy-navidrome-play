@@ -350,6 +350,7 @@ Panel {
                 Text {
                   Layout.fillWidth: true
                   text: svc.track.title || ""
+                  textFormat: Text.PlainText  // server-controlled: never interpret as rich/HTML text
                   color: root.foreground
                   font.family: root.fontFamily
                   font.bold: true
@@ -359,6 +360,7 @@ Panel {
                   Layout.fillWidth: true
                   visible: !!svc.track.artist
                   text: svc.track.artist + (svc.track.album ? " · " + svc.track.album : "")
+                  textFormat: Text.PlainText  // server-controlled: never interpret as rich/HTML text
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -497,6 +499,7 @@ Panel {
             Layout.fillWidth: true
             visible: svc.searchError !== ""
             text: "Search failed — " + svc.searchError
+            textFormat: Text.PlainText  // may embed a server-supplied error message
             color: root.urgent
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -507,6 +510,7 @@ Panel {
             Layout.fillWidth: true
             visible: svc.actionError !== ""
             text: "Command failed — " + svc.actionError
+            textFormat: Text.PlainText  // may embed a server-supplied error message
             color: root.urgent
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

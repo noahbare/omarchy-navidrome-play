@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import random
+import stat
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -24,6 +26,16 @@ PUBLIC_STICKY_SEC = 600
 LAN_TIMEOUT = 2.5
 PUBLIC_TIMEOUT = 10
 
+# Byte ceilings: nothing here needs to be large, and an unbounded read is a
+# free memory/disk exhaustion vector against a hostile or compromised server,
+# or against a local file planted at one of our predictable state paths.
+MAX_CONFIG_BYTES = 64 * 1024
+MAX_STATE_BYTES = 4 * 1024 * 1024
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
+MAX_STR = 300  # generous for a title/artist/album name; not a novel
+MAX_LIST = 500  # a wall of 500 search results is already a UI bug, not a feature
+
 
 class AuthError(Exception):
     """Bad credentials. Deliberately never triggers endpoint failover: retrying a
@@ -31,27 +43,111 @@ class AuthError(Exception):
     rate limiter."""
 
 
-def load_json(path, default):
+def clip_str(v, limit=MAX_STR):
+    """Bound a server-supplied string field before it reaches QML."""
+    if not isinstance(v, str):
+        return ""
+    return v[:limit]
+
+
+def clip_list(v, limit=MAX_LIST):
+    """Bound a server-supplied array field before we iterate/persist it."""
+    if not isinstance(v, list):
+        return []
+    return v[:limit]
+
+
+def ensure_private_dir(path):
+    """Create/verify a directory that only we can read or write.
+
+    Refuses to follow a symlink planted at `path`, refuses a directory we
+    don't own, and tightens permissions if they're looser than 0700.
+    """
     try:
-        with open(path) as f:
-            return json.load(f)
+        st = os.lstat(path)
+    except FileNotFoundError:
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        os.chmod(path, 0o700)  # makedirs' mode is masked by umask
+        return
+    if not stat.S_ISDIR(st.st_mode):
+        raise ValueError("expected a directory: %s" % path)
+    if st.st_uid != os.getuid():
+        raise ValueError("directory not owned by current user: %s" % path)
+    if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        os.chmod(path, 0o700)
+
+
+def _secure_read(path, max_bytes):
+    """Read a regular file without following symlinks, and without ever
+    blocking on or exhausting memory against a FIFO/device/oversized file
+    planted at one of our predictable state paths."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("not a regular file: %s" % path)
+        with os.fdopen(fd, "rb", closefd=True) as f:
+            fd = None  # ownership transferred to the file object
+            data = f.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise ValueError("file too large: %s" % path)
+        return data
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _require_secure_file(path):
+    """Credentials live here: refuse anything but a regular file we own with
+    no group/other access, and refuse a symlink outright."""
+    st = os.lstat(path)
+    if not stat.S_ISREG(st.st_mode):
+        raise ValueError("config is not a regular file: %s" % path)
+    if st.st_uid != os.getuid():
+        raise ValueError("config not owned by current user: %s" % path)
+    if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise ValueError("config is group/world accessible: %s" % path)
+
+
+def load_json(path, default, max_bytes=MAX_STATE_BYTES, require_secure=False):
+    try:
+        if require_secure:
+            _require_secure_file(path)
+        return json.loads(_secure_read(path, max_bytes))
     except Exception:
         return default
 
 
 def save_json(path, data):
+    """Atomic, symlink-safe write: random 0600 temp file in a private 0700
+    directory, fsync'd, then renamed over the target."""
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(data, f)
-        os.replace(tmp, path)
+        d = os.path.dirname(path)
+        ensure_private_dir(d)
+        payload = json.dumps(data).encode()
+        fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=d)
+        try:
+            with os.fdopen(fd, "wb", closefd=True) as f:
+                fd = None
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+            tmp = None
+        finally:
+            if fd is not None:
+                os.close(fd)
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
     except Exception:
         pass  # state is a convenience; losing it must never break a call
 
 
 def load_config():
-    cfg = load_json(CONFIG, None)
+    cfg = load_json(CONFIG, None, max_bytes=MAX_CONFIG_BYTES, require_secure=True)
     if cfg is None:
         raise FileNotFoundError("not configured")
     if not cfg.get("user") or not cfg.get("password") or not (cfg.get("url") or cfg.get("public_url")):
@@ -73,13 +169,29 @@ def build_url(base, user, password, endpoint, extra=""):
     return "%s/rest/%s?%s%s" % (base.rstrip("/"), endpoint, q, ("&" + extra) if extra else "")
 
 
-def raw(url, timeout):
+def raw(url, timeout, max_bytes=MAX_RESPONSE_BYTES):
+    """Read an HTTP response with both a byte ceiling and an overall wall
+    clock deadline, so a hostile or compromised server can't exhaust memory
+    or disk, or stall a caller by trickling bytes forever."""
+    deadline = time.time() + max(timeout * 3, timeout + 5)
     with urllib.request.urlopen(url, timeout=timeout) as r:
-        return r.read()
+        chunks = []
+        total = 0
+        while True:
+            chunk = r.read(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError("response too large")
+            chunks.append(chunk)
+            if time.time() > deadline:
+                raise ValueError("response deadline exceeded")
+        return b"".join(chunks)
 
 
-def call(base, cfg, endpoint, extra="", timeout=10):
-    body = json.loads(raw(build_url(base, cfg["user"], cfg["password"], endpoint, extra), timeout))
+def call(base, cfg, endpoint, extra="", timeout=10, max_bytes=MAX_RESPONSE_BYTES):
+    body = json.loads(raw(build_url(base, cfg["user"], cfg["password"], endpoint, extra), timeout, max_bytes))
     body = body["subsonic-response"]
     if body.get("status") != "ok":
         err = body.get("error") or {}

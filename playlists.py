@@ -37,9 +37,13 @@ def main():
     except Exception as e:
         out(False, error=str(e))
 
-    playlists = (body.get("playlists") or {}).get("playlist") or []
+    playlists = subsonic.clip_list((body.get("playlists") or {}).get("playlist") or [])
     out(True, playlists=[
-        {"id": p.get("id", ""), "name": p.get("name", ""), "songCount": int(p.get("songCount") or 0)}
+        {
+            "id": subsonic.clip_str(p.get("id", ""), 120),
+            "name": subsonic.clip_str(p.get("name", "")),
+            "songCount": int(p.get("songCount") or 0),
+        }
         for p in playlists
     ])
 

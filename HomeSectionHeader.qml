@@ -42,6 +42,7 @@ Rectangle {
     }
     Text {
       text: header.label + (header.count > 0 ? " (" + header.count + ")" : "")
+      textFormat: Text.PlainText
       color: header.dim
       font.family: header.fontFamily
       font.pixelSize: Style.font.caption

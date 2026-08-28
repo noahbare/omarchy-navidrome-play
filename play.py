@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 
@@ -23,11 +24,21 @@ import subsonic
 
 STATE_DIR = subsonic.STATE_DIR
 QUEUE_FILE = os.path.join(STATE_DIR, "queue.json")
-PLAYLIST_FILE = os.path.join(STATE_DIR, "queue.m3u8")
 COVER_DIR = os.path.join(STATE_DIR, "covers")
+# The mpv playlist is written here, fed to mpv, and deleted immediately --
+# never at a durable path -- because each entry is a stream URL carrying a
+# live Subsonic auth token and salt. See ensure_mpv()/main() below.
+EPHEMERAL_DIR = os.path.join(STATE_DIR, "ephemeral")
 COVER_CACHE_MAX = 100
-SOCK_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "nbare-navidrome-play-mpv.sock")
+COVER_MAX_BYTES = 3 * 1024 * 1024
+SOCK_PATH = mpvipc.sock_path()
 MIX_DEFAULT_COUNT = 40
+
+# Fanout/size ceilings: the "artist" kind fires one getAlbum call per album,
+# and any kind can otherwise be handed an enormous song list by a hostile or
+# compromised server. Bound both the request fanout and the resulting queue.
+MAX_ARTIST_ALBUMS = 60
+MAX_QUEUE_SONGS = 500
 
 # subsonic.pick_endpoint() hands back a timeout sized for cheap polls (ping,
 # getNowPlaying) -- fine for the probe itself, much too tight for the calls
@@ -41,6 +52,20 @@ BUILD_TIMEOUT_PUBLIC = 30
 def out(ok, **kw):
     print(json.dumps({"ok": ok, **kw}))
     sys.exit(0 if ok else 1)
+
+
+def _looks_like_image(data):
+    """Cheap magic-byte sniff so a hostile/compromised server can't hand
+    QML's Image element something other than an actual image to decode."""
+    if data[:3] == b"\xff\xd8\xff":
+        return True  # JPEG
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return True  # PNG
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return True  # GIF
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return True  # WEBP
+    return False
 
 
 def cover_path(base, cfg, cover_id, timeout):
@@ -57,21 +82,36 @@ def cover_path(base, cfg, cover_id, timeout):
     path = os.path.join(COVER_DIR, safe + ".img")
     if os.path.exists(path):
         return path
+    fd = None
+    tmp = None
     try:
-        os.makedirs(COVER_DIR, exist_ok=True)
+        subsonic.ensure_private_dir(COVER_DIR)
         data = subsonic.raw(
             subsonic.build_url(base, cfg["user"], cfg["password"], "getCoverArt",
                                "id=%s&size=300" % urllib.parse.quote(cover_id)),
             timeout,
+            max_bytes=COVER_MAX_BYTES,
         )
-        tmp = path + ".tmp"
-        with open(tmp, "wb") as f:
+        if not _looks_like_image(data):
+            return ""
+        fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=COVER_DIR)
+        with os.fdopen(fd, "wb", closefd=True) as f:
+            fd = None
             f.write(data)
         os.replace(tmp, path)
+        tmp = None
         prune_covers()
         return path
     except Exception:
         return ""  # art is decoration; never let it sink playback
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def prune_covers():
@@ -93,10 +133,10 @@ def stream_url(base, cfg, song_id):
 
 def song_brief(base, cfg, timeout, s):
     return {
-        "id": s.get("id", ""),
-        "title": s.get("title") or "Unknown",
-        "artist": s.get("artist") or s.get("displayArtist") or "",
-        "album": s.get("album") or "",
+        "id": subsonic.clip_str(s.get("id", ""), 120),
+        "title": subsonic.clip_str(s.get("title") or "Unknown"),
+        "artist": subsonic.clip_str(s.get("artist") or s.get("displayArtist") or ""),
+        "album": subsonic.clip_str(s.get("album") or ""),
         "duration": int(s.get("duration") or 0),
         "cover": cover_path(base, cfg, s.get("coverArt"), timeout),
         # Subsonic includes this key (its value is a timestamp) only when the
@@ -186,7 +226,9 @@ def main():
             if not albums:
                 out(False, error="artist has no albums")
             songs = []
-            for alb in albums:
+            for alb in albums[:MAX_ARTIST_ALBUMS]:
+                if len(songs) >= MAX_QUEUE_SONGS:
+                    break
                 alb_id = alb.get("id")
                 if not alb_id:
                     continue
@@ -206,18 +248,32 @@ def main():
     except Exception as e:
         out(False, error=str(e))
 
+    songs = subsonic.clip_list(songs, MAX_QUEUE_SONGS)
     briefs = [song_brief(base, cfg, timeout, s) for s in songs]
     urls = [stream_url(base, cfg, b["id"]) for b in briefs]
 
     try:
         ensure_mpv()
-        os.makedirs(STATE_DIR, exist_ok=True)
-        with open(PLAYLIST_FILE, "w") as f:
-            f.write("#EXTM3U\n")
-            for u in urls:
-                f.write(u + "\n")
-        mpvipc.command(SOCK_PATH, ["loadlist", PLAYLIST_FILE, "replace"])
-        mpvipc.command(SOCK_PATH, ["set_property", "pause", False])
+        subsonic.ensure_private_dir(EPHEMERAL_DIR)
+        # Ephemeral, 0600, randomly named, and unlinked the instant mpv has
+        # consumed it -- these URLs carry a live Subsonic auth token+salt and
+        # must never sit at a durable, predictable path.
+        fd, tmp_playlist = tempfile.mkstemp(prefix=".queue-", suffix=".m3u8", dir=EPHEMERAL_DIR)
+        try:
+            with os.fdopen(fd, "w", closefd=True) as f:
+                fd = None
+                f.write("#EXTM3U\n")
+                for u in urls:
+                    f.write(u + "\n")
+            mpvipc.command(SOCK_PATH, ["loadlist", tmp_playlist, "replace"])
+            mpvipc.command(SOCK_PATH, ["set_property", "pause", False])
+        finally:
+            if fd is not None:
+                os.close(fd)
+            try:
+                os.unlink(tmp_playlist)
+            except OSError:
+                pass
     except Exception as e:
         out(False, error="player: %s" % e)
 

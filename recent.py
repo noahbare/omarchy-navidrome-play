@@ -42,15 +42,15 @@ def main():
     except Exception as e:
         out(False, error=str(e))
 
-    albums = (body.get("albumList2") or {}).get("album") or []
+    albums = subsonic.clip_list((body.get("albumList2") or {}).get("album") or [], RESULT_LIMIT)
     out(True, albums=[
         {
-            "id": a.get("id", ""),
-            "name": a.get("name") or a.get("title", ""),
-            "artist": a.get("artist", ""),
+            "id": subsonic.clip_str(a.get("id", ""), 120),
+            "name": subsonic.clip_str(a.get("name") or a.get("title", "")),
+            "artist": subsonic.clip_str(a.get("artist", "")),
             # Carried through so the QML side can derive a "Recent Artists"
             # section by deduping this list, with no extra network call.
-            "artistId": a.get("artistId", ""),
+            "artistId": subsonic.clip_str(a.get("artistId", ""), 120),
         }
         for a in albums
     ])

@@ -42,16 +42,16 @@ def main():
     except Exception as e:
         out(False, error=str(e))
 
-    songs = (body.get("starred2") or {}).get("song") or []
+    songs = subsonic.clip_list((body.get("starred2") or {}).get("song") or [])
     out(True, songs=[
         {
-            "id": s.get("id", ""),
-            "title": s.get("title", ""),
-            "artist": s.get("artist") or s.get("displayArtist", ""),
-            "album": s.get("album", ""),
+            "id": subsonic.clip_str(s.get("id", ""), 120),
+            "title": subsonic.clip_str(s.get("title", "")),
+            "artist": subsonic.clip_str(s.get("artist") or s.get("displayArtist", "")),
+            "album": subsonic.clip_str(s.get("album", "")),
             # Carried through so the QML side can derive a "Favorite Artists"
             # section by deduping this list, with no extra network call.
-            "artistId": s.get("artistId", ""),
+            "artistId": subsonic.clip_str(s.get("artistId", ""), 120),
         }
         for s in songs
     ])

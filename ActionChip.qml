@@ -31,6 +31,7 @@ Rectangle {
     id: chipText
     anchors.centerIn: parent
     text: chip.label
+    textFormat: Text.PlainText
     color: chip._hot ? chip.foreground : chip.dim
     font.family: chip.fontFamily
     font.pixelSize: Style.font.caption

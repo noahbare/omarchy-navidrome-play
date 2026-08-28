@@ -45,6 +45,7 @@ Rectangle {
       Text {
         Layout.fillWidth: true
         text: artistRow.name
+        textFormat: Text.PlainText  // server-controlled: never interpret as rich/HTML text
         color: artistRow.foreground
         font.family: artistRow.fontFamily
         elide: Text.ElideRight
@@ -53,6 +54,7 @@ Rectangle {
         Layout.fillWidth: true
         visible: artistRow.subtitle !== ""
         text: artistRow.subtitle
+        textFormat: Text.PlainText  // server-controlled: never interpret as rich/HTML text
         color: artistRow.dim
         font.family: artistRow.fontFamily
         font.pixelSize: Style.font.caption

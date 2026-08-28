@@ -54,25 +54,29 @@ def main():
     r = body.get("searchResult3") or {}
 
     artists = [
-        {"id": a.get("id", ""), "name": a.get("name", ""), "albumCount": a.get("albumCount", 0)}
-        for a in (r.get("artist") or [])
+        {
+            "id": subsonic.clip_str(a.get("id", ""), 120),
+            "name": subsonic.clip_str(a.get("name", "")),
+            "albumCount": int(a.get("albumCount") or 0),
+        }
+        for a in subsonic.clip_list(r.get("artist") or [], RESULT_LIMIT)
     ]
     albums = [
         {
-            "id": a.get("id", ""),
-            "name": a.get("name") or a.get("title", ""),
-            "artist": a.get("artist", ""),
+            "id": subsonic.clip_str(a.get("id", ""), 120),
+            "name": subsonic.clip_str(a.get("name") or a.get("title", "")),
+            "artist": subsonic.clip_str(a.get("artist", "")),
         }
-        for a in (r.get("album") or [])
+        for a in subsonic.clip_list(r.get("album") or [], RESULT_LIMIT)
     ]
     songs = [
         {
-            "id": s.get("id", ""),
-            "title": s.get("title", ""),
-            "artist": s.get("artist") or s.get("displayArtist", ""),
-            "album": s.get("album", ""),
+            "id": subsonic.clip_str(s.get("id", ""), 120),
+            "title": subsonic.clip_str(s.get("title", "")),
+            "artist": subsonic.clip_str(s.get("artist") or s.get("displayArtist", "")),
+            "album": subsonic.clip_str(s.get("album", "")),
         }
-        for s in (r.get("song") or [])
+        for s in subsonic.clip_list(r.get("song") or [], RESULT_LIMIT)
     ]
 
     out(True, artists=artists, albums=albums, songs=songs)

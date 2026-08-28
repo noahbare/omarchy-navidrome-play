@@ -46,6 +46,7 @@ Rectangle {
       Text {
         Layout.fillWidth: true
         text: rowRoot.title
+        textFormat: Text.PlainText  // server-controlled: never interpret as rich/HTML text
         color: rowRoot.foreground
         font.family: rowRoot.fontFamily
         elide: Text.ElideRight
@@ -54,6 +55,7 @@ Rectangle {
         Layout.fillWidth: true
         visible: rowRoot.subtitle !== ""
         text: rowRoot.subtitle
+        textFormat: Text.PlainText  // server-controlled: never interpret as rich/HTML text
         color: rowRoot.dim
         font.family: rowRoot.fontFamily
         font.pixelSize: Style.font.caption

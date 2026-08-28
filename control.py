@@ -8,12 +8,11 @@ than a remote-control call to some other client.
 """
 
 import json
-import os
 import sys
 
 import mpvipc
 
-SOCK_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "nbare-navidrome-play-mpv.sock")
+SOCK_PATH = mpvipc.sock_path()
 ACTIONS = ("playpause", "next", "previous", "stop")
 
 
