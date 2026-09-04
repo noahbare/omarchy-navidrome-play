@@ -4,14 +4,13 @@
     playlists.py
 """
 
-import json
 import sys
 
 import subsonic
 
 
 def out(ok, **kw):
-    print(json.dumps({"ok": ok, **kw}))
+    subsonic.emit(ok, **kw)
     sys.exit(0 if ok else 1)
 
 

@@ -9,7 +9,6 @@ written by play.py -- never Navidrome. A track's title/artist/cover come
 from that sidecar, joined in by playlist position.
 """
 
-import json
 import os
 
 import mpvipc
@@ -20,7 +19,7 @@ SOCK_PATH = mpvipc.sock_path()
 
 
 def idle():
-    print(json.dumps({"ok": True, "loaded": False}))
+    subsonic.emit(True, loaded=False)
 
 
 def main():
@@ -45,16 +44,16 @@ def main():
     queue = subsonic.load_json(QUEUE_FILE, [])
     track = queue[pos] if 0 <= pos < len(queue) else {}
 
-    print(json.dumps({
-        "ok": True,
-        "loaded": True,
-        "paused": bool(paused),
-        "position": position,
-        "duration": duration or track.get("duration", 0),
-        "queue_pos": pos,
-        "queue_count": count,
-        "track": track,
-    }))
+    subsonic.emit(
+        True,
+        loaded=True,
+        paused=bool(paused),
+        position=position,
+        duration=duration or track.get("duration", 0),
+        queue_pos=pos,
+        queue_count=count,
+        track=track,
+    )
 
 
 if __name__ == "__main__":

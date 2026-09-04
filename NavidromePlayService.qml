@@ -67,6 +67,55 @@ Item {
   property string busy: ""
   property string actionError: ""
 
+  // ---- backend process watchdog ----
+  // Every backend.sh invocation ultimately execs a single python3 process
+  // (no forked children -- mpv is the one deliberate exception, and it is
+  // always started fully detached via start_new_session, so it is never a
+  // child of these Process objects and this watchdog never touches it).
+  // StdioCollector has no timeout or byte ceiling of its own, so without
+  // this a stalled network call -- or a server that stalls just short of
+  // its own per-request timeout on every one of an "artist" play's up to
+  // 60 sequential requests -- could leave a Process (and svc.busy) wedged
+  // indefinitely. Each launcher below arms a deadline before starting its
+  // Process; this timer enforces it: SIGTERM first, then SIGKILL if the
+  // process hasn't actually exited shortly after.
+  readonly property int killGraceMs: 2000
+
+  function armDeadline(proc, timeoutMs) {
+    proc.deadlineAt = Date.now() + timeoutMs
+    proc.killEscalate = false
+  }
+
+  function watchdogTick() {
+    var now = Date.now()
+    var procs = [searchProc, recentProc, favoritesProc, playlistsProc,
+                 statusProc, playProc, controlProc, starProc]
+    for (var i = 0; i < procs.length; i++) {
+      var proc = procs[i]
+      if (!proc.running) { proc.killEscalate = false; continue }
+      if (proc.killEscalate) {
+        if (now - proc.killedAt > svc.killGraceMs) {
+          try { proc.signal(9) } catch (e) {}
+          proc.running = false
+          proc.killEscalate = false
+        }
+        continue
+      }
+      if (proc.deadlineAt && now > proc.deadlineAt) {
+        try { proc.signal(15) } catch (e) {}
+        proc.killedAt = now
+        proc.killEscalate = true
+      }
+    }
+  }
+
+  Timer {
+    interval: 500
+    running: true
+    repeat: true
+    onTriggered: svc.watchdogTick()
+  }
+
   // Seconds since the last authoritative status poll, added to `position`
   // so the progress bar creeps every second instead of jumping by
   // statusRefreshSec. Reset on every poll; gated on active playback so an
@@ -81,6 +130,9 @@ Item {
 
   Process {
     id: searchProc
+    property real deadlineAt: 0
+    property bool killEscalate: false
+    property real killedAt: 0
     stdout: StdioCollector {
       onStreamFinished: {
         svc.searching = false
@@ -109,11 +161,15 @@ Item {
     if (!query) { artists = []; albums = []; songs = []; searchError = ""; searching = false; return }
     svc.searching = true
     searchProc.command = ["bash", pluginDir + "/backend.sh", "search", query]
+    svc.armDeadline(searchProc, 20000)
     searchProc.running = true
   }
 
   Process {
     id: recentProc
+    property real deadlineAt: 0
+    property bool killEscalate: false
+    property real killedAt: 0
     stdout: StdioCollector {
       onStreamFinished: {
         var raw = this.text ? this.text.trim() : ""
@@ -131,11 +187,15 @@ Item {
   function loadRecent() {
     if (recentProc.running) return
     recentProc.command = ["bash", pluginDir + "/backend.sh", "recent"]
+    svc.armDeadline(recentProc, 20000)
     recentProc.running = true
   }
 
   Process {
     id: favoritesProc
+    property real deadlineAt: 0
+    property bool killEscalate: false
+    property real killedAt: 0
     stdout: StdioCollector {
       onStreamFinished: {
         var raw = this.text ? this.text.trim() : ""
@@ -153,11 +213,15 @@ Item {
   function loadFavorites() {
     if (favoritesProc.running) return
     favoritesProc.command = ["bash", pluginDir + "/backend.sh", "favorites"]
+    svc.armDeadline(favoritesProc, 20000)
     favoritesProc.running = true
   }
 
   Process {
     id: playlistsProc
+    property real deadlineAt: 0
+    property bool killEscalate: false
+    property real killedAt: 0
     stdout: StdioCollector {
       onStreamFinished: {
         var raw = this.text ? this.text.trim() : ""
@@ -175,11 +239,15 @@ Item {
   function loadPlaylists() {
     if (playlistsProc.running) return
     playlistsProc.command = ["bash", pluginDir + "/backend.sh", "playlists"]
+    svc.armDeadline(playlistsProc, 20000)
     playlistsProc.running = true
   }
 
   Process {
     id: statusProc
+    property real deadlineAt: 0
+    property bool killEscalate: false
+    property real killedAt: 0
     stdout: StdioCollector {
       onStreamFinished: {
         var raw = this.text ? this.text.trim() : ""
@@ -208,11 +276,15 @@ Item {
   function refreshStatus() {
     if (statusProc.running) return
     statusProc.command = ["bash", pluginDir + "/backend.sh", "status"]
+    svc.armDeadline(statusProc, 15000)
     statusProc.running = true
   }
 
   Process {
     id: playProc
+    property real deadlineAt: 0
+    property bool killEscalate: false
+    property real killedAt: 0
     stdout: StdioCollector {
       onStreamFinished: {
         var raw = this.text ? this.text.trim() : ""
@@ -232,11 +304,19 @@ Item {
     var args = ["bash", pluginDir + "/backend.sh", "play", kind, String(id)]
     if (kind === "mix") args.push(String(svc.mixCount))
     playProc.command = args
+    // Generous: an "artist" play can chain a getArtist call plus up to
+    // ARTIST_BUILD_DEADLINE_SEC (45s, play.py) worth of getAlbum calls,
+    // plus mpv startup -- this only needs to catch a genuine hang, since
+    // play.py already bounds its own worst case well under this.
+    svc.armDeadline(playProc, 60000)
     playProc.running = true
   }
 
   Process {
     id: controlProc
+    property real deadlineAt: 0
+    property bool killEscalate: false
+    property real killedAt: 0
     stdout: StdioCollector {
       onStreamFinished: {
         var raw = this.text ? this.text.trim() : ""
@@ -254,11 +334,15 @@ Item {
     busy = "control/" + action
     actionError = ""
     controlProc.command = ["bash", pluginDir + "/backend.sh", "control", action]
+    svc.armDeadline(controlProc, 10000)
     controlProc.running = true
   }
 
   Process {
     id: starProc
+    property real deadlineAt: 0
+    property bool killEscalate: false
+    property real killedAt: 0
     stdout: StdioCollector {
       onStreamFinished: {
         var raw = this.text ? this.text.trim() : ""
@@ -276,6 +360,7 @@ Item {
     busy = "star/" + songId
     actionError = ""
     starProc.command = ["bash", pluginDir + "/backend.sh", currentlyStarred ? "unstar" : "star", String(songId)]
+    svc.armDeadline(starProc, 20000)
     starProc.running = true
   }
 

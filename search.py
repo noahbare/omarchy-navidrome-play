@@ -6,7 +6,6 @@
 Read-only: never touches mpv. Invoked only by backend.sh.
 """
 
-import json
 import sys
 import urllib.parse
 
@@ -16,7 +15,7 @@ RESULT_LIMIT = 8
 
 
 def out(ok, **kw):
-    print(json.dumps({"ok": ok, **kw}))
+    subsonic.emit(ok, **kw)
     sys.exit(0 if ok else 1)
 
 

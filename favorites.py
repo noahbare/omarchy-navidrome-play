@@ -9,14 +9,13 @@ album-shaped favourites list would never show anything starred through this
 plugin itself. Same shape as search.py's "songs" list.
 """
 
-import json
 import sys
 
 import subsonic
 
 
 def out(ok, **kw):
-    print(json.dumps({"ok": ok, **kw}))
+    subsonic.emit(ok, **kw)
     sys.exit(0 if ok else 1)
 
 

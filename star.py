@@ -8,7 +8,6 @@ Also patches the queue.json sidecar in place so status.py reflects the new
 state on its very next poll, without an extra network round trip.
 """
 
-import json
 import os
 import sys
 import urllib.parse
@@ -19,7 +18,7 @@ QUEUE_FILE = os.path.join(subsonic.STATE_DIR, "queue.json")
 
 
 def out(ok, **kw):
-    print(json.dumps({"ok": ok, **kw}))
+    subsonic.emit(ok, **kw)
     sys.exit(0 if ok else 1)
 
 

@@ -11,11 +11,10 @@ detached, and left running idle between tracks; later calls (status.py,
 control.py) find it again via its fixed IPC socket path.
 """
 
-import json
 import os
+import stat
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.parse
 
@@ -40,6 +39,14 @@ MIX_DEFAULT_COUNT = 40
 MAX_ARTIST_ALBUMS = 60
 MAX_QUEUE_SONGS = 500
 
+# The "artist" kind fires one getAlbum call per album -- up to 60 of them,
+# each individually allowed 20-30s -- with no cap on the total. Bound the
+# whole fan-out loop's wall-clock time too, so a server that stalls (but
+# doesn't outright fail) every request can't turn "play this artist" into a
+# multi-minute hang; a partial queue from what came back in time is better
+# than an unbounded one.
+ARTIST_BUILD_DEADLINE_SEC = 45
+
 # subsonic.pick_endpoint() hands back a timeout sized for cheap polls (ping,
 # getNowPlaying) -- fine for the probe itself, much too tight for the calls
 # below. getSimilarSongs2 in particular has to compute a mix server-side and
@@ -50,7 +57,7 @@ BUILD_TIMEOUT_PUBLIC = 30
 
 
 def out(ok, **kw):
-    print(json.dumps({"ok": ok, **kw}))
+    subsonic.emit(ok, **kw)
     sys.exit(0 if ok else 1)
 
 
@@ -68,6 +75,30 @@ def _looks_like_image(data):
     return False
 
 
+def _cached_cover_ok(dirfd, name):
+    """Fast path for an already-downloaded cover: open it by name relative
+    to the held, validated directory fd (no-follow, so a planted symlink is
+    refused rather than followed), then re-check that it's still a regular,
+    size-bounded, actual image before we trust it enough to hand its path
+    to QML. Only reads the first few bytes -- this runs on every song in a
+    queue that can be up to 500 entries long."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dirfd)
+    except OSError:
+        return False
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or not (0 < st.st_size <= COVER_MAX_BYTES):
+            return False
+        with os.fdopen(fd, "rb", closefd=True) as f:
+            fd = None
+            head = f.read(16)
+        return _looks_like_image(head)
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
 def cover_path(base, cfg, cover_id, timeout):
     """Download cover art once and hand QML a local file path.
 
@@ -79,13 +110,14 @@ def cover_path(base, cfg, cover_id, timeout):
     safe = "".join(c for c in cover_id if c.isalnum() or c in "-_")[:120]
     if not safe:
         return ""
-    path = os.path.join(COVER_DIR, safe + ".img")
-    if os.path.exists(path):
-        return path
-    fd = None
-    tmp = None
+    name = safe + ".img"
+    dirfd = None
+    tmp_fd = None
+    tmp_name = None
     try:
-        subsonic.ensure_private_dir(COVER_DIR)
+        dirfd = subsonic.open_private_dir(COVER_DIR)
+        if _cached_cover_ok(dirfd, name):
+            return os.path.join(COVER_DIR, name)
         data = subsonic.raw(
             subsonic.build_url(base, cfg["user"], cfg["password"], "getCoverArt",
                                "id=%s&size=300" % urllib.parse.quote(cover_id)),
@@ -94,34 +126,48 @@ def cover_path(base, cfg, cover_id, timeout):
         )
         if not _looks_like_image(data):
             return ""
-        fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=COVER_DIR)
-        with os.fdopen(fd, "wb", closefd=True) as f:
-            fd = None
+        tmp_fd, tmp_name = subsonic.mkstemp_at(dirfd)
+        with os.fdopen(tmp_fd, "wb", closefd=True) as f:
+            tmp_fd = None
             f.write(data)
-        os.replace(tmp, path)
-        tmp = None
-        prune_covers()
-        return path
+        os.replace(tmp_name, name, src_dir_fd=dirfd, dst_dir_fd=dirfd)
+        tmp_name = None
+        prune_covers(dirfd)
+        return os.path.join(COVER_DIR, name)
     except Exception:
         return ""  # art is decoration; never let it sink playback
     finally:
-        if fd is not None:
-            os.close(fd)
-        if tmp is not None:
+        if tmp_fd is not None:
+            os.close(tmp_fd)
+        if tmp_name is not None:
             try:
-                os.unlink(tmp)
+                os.unlink(tmp_name, dir_fd=dirfd)
             except OSError:
                 pass
+        if dirfd is not None:
+            os.close(dirfd)
 
 
-def prune_covers():
+def prune_covers(dirfd):
     try:
-        files = [os.path.join(COVER_DIR, f) for f in os.listdir(COVER_DIR) if f.endswith(".img")]
-        if len(files) <= COVER_CACHE_MAX:
+        names = [n for n in os.listdir(dirfd) if n.endswith(".img")]
+        if len(names) <= COVER_CACHE_MAX:
             return
-        files.sort(key=lambda p: os.path.getmtime(p))
-        for p in files[: len(files) - COVER_CACHE_MAX]:
-            os.unlink(p)
+        entries = []
+        for n in names:
+            try:
+                st = os.stat(n, dir_fd=dirfd, follow_symlinks=False)
+            except OSError:
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            entries.append((st.st_mtime, n))
+        entries.sort()
+        for _, n in entries[: len(entries) - COVER_CACHE_MAX]:
+            try:
+                os.unlink(n, dir_fd=dirfd)
+            except OSError:
+                pass
     except Exception:
         pass
 
@@ -226,9 +272,12 @@ def main():
             if not albums:
                 out(False, error="artist has no albums")
             songs = []
+            build_deadline = time.time() + ARTIST_BUILD_DEADLINE_SEC
             for alb in albums[:MAX_ARTIST_ALBUMS]:
                 if len(songs) >= MAX_QUEUE_SONGS:
                     break
+                if time.time() > build_deadline:
+                    break  # partial queue beats an unbounded fan-out
                 alb_id = alb.get("id")
                 if not alb_id:
                     continue
@@ -252,30 +301,38 @@ def main():
     briefs = [song_brief(base, cfg, timeout, s) for s in songs]
     urls = [stream_url(base, cfg, b["id"]) for b in briefs]
 
+    dirfd = None
+    fd = None
+    tmp_name = None
     try:
         ensure_mpv()
-        subsonic.ensure_private_dir(EPHEMERAL_DIR)
         # Ephemeral, 0600, randomly named, and unlinked the instant mpv has
         # consumed it -- these URLs carry a live Subsonic auth token+salt and
-        # must never sit at a durable, predictable path.
-        fd, tmp_playlist = tempfile.mkstemp(prefix=".queue-", suffix=".m3u8", dir=EPHEMERAL_DIR)
-        try:
-            with os.fdopen(fd, "w", closefd=True) as f:
-                fd = None
-                f.write("#EXTM3U\n")
-                for u in urls:
-                    f.write(u + "\n")
-            mpvipc.command(SOCK_PATH, ["loadlist", tmp_playlist, "replace"])
-            mpvipc.command(SOCK_PATH, ["set_property", "pause", False])
-        finally:
-            if fd is not None:
-                os.close(fd)
-            try:
-                os.unlink(tmp_playlist)
-            except OSError:
-                pass
+        # must never sit at a durable, predictable path. Created relative to
+        # a held, validated directory fd so a directory swapped in after
+        # validation can't redirect the write.
+        dirfd = subsonic.open_private_dir(EPHEMERAL_DIR)
+        fd, tmp_name = subsonic.mkstemp_at(dirfd, prefix=".queue-", suffix=".m3u8")
+        with os.fdopen(fd, "w", closefd=True) as f:
+            fd = None
+            f.write("#EXTM3U\n")
+            for u in urls:
+                f.write(u + "\n")
+        tmp_playlist = os.path.join(EPHEMERAL_DIR, tmp_name)
+        mpvipc.command(SOCK_PATH, ["loadlist", tmp_playlist, "replace"])
+        mpvipc.command(SOCK_PATH, ["set_property", "pause", False])
     except Exception as e:
         out(False, error="player: %s" % e)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if tmp_name is not None:
+            try:
+                os.unlink(tmp_name, dir_fd=dirfd)
+            except OSError:
+                pass
+        if dirfd is not None:
+            os.close(dirfd)
 
     subsonic.save_json(QUEUE_FILE, briefs)
     out(True, count=len(briefs))

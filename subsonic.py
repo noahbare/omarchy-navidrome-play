@@ -6,7 +6,7 @@ import json
 import os
 import random
 import stat
-import tempfile
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -36,6 +36,14 @@ MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_STR = 300  # generous for a title/artist/album name; not a novel
 MAX_LIST = 500  # a wall of 500 search results is already a UI bug, not a feature
 
+# Every script's stdout is read whole by a QML StdioCollector with no byte
+# ceiling of its own. Individual result fields are already clipped via
+# clip_str/clip_list, but a server-supplied error message (Subsonic's
+# <error message="...">) reaches str(exception) uncapped -- cap the whole
+# emitted line here so that path, and any future one, can't turn a hostile
+# or compromised server's response into an unbounded write on our stdout.
+MAX_OUTPUT_BYTES = 256 * 1024
+
 
 class AuthError(Exception):
     """Bad credentials. Deliberately never triggers endpoint failover: retrying a
@@ -57,35 +65,94 @@ def clip_list(v, limit=MAX_LIST):
     return v[:limit]
 
 
-def ensure_private_dir(path):
-    """Create/verify a directory that only we can read or write.
+def emit(ok, **kw):
+    """Every script's sole stdout write: one compact, size-bounded JSON
+    line. Clips every top-level string value (this is where an unclipped
+    `error=str(e)` built from a hostile/compromised server's message would
+    otherwise slip through) and, as a hard backstop against anything this
+    doesn't anticipate, drops the whole payload in favour of a small fixed
+    error if the serialized line still comes out oversized.
+    """
+    safe = {"ok": bool(ok)}
+    for k, v in kw.items():
+        safe[k] = clip_str(v, 500) if isinstance(v, str) else v
+    line = json.dumps(safe)
+    if len(line) > MAX_OUTPUT_BYTES:
+        line = json.dumps({"ok": False, "error": "output too large"})
+    sys.stdout.write(line + "\n")
+    sys.stdout.flush()
+
+
+def open_private_dir(path):
+    """Create/verify a directory that only we can read or write, and return
+    a verified fd for it.
 
     Refuses to follow a symlink planted at `path`, refuses a directory we
-    don't own, and tightens permissions if they're looser than 0700.
+    don't own, and tightens permissions if they're looser than 0700. All
+    subsequent operations on this directory's contents must go through the
+    returned fd (dir_fd=) rather than the pathname again -- once the fd is
+    open, a later replacement of the directory itself can no longer
+    redirect them.
     """
     try:
-        st = os.lstat(path)
+        fd = os.open(path, os.O_DIRECTORY | os.O_NOFOLLOW)
     except FileNotFoundError:
-        os.makedirs(path, mode=0o700, exist_ok=True)
+        os.makedirs(path, mode=0o700, exist_ok=True)  # mkdir never follows
         os.chmod(path, 0o700)  # makedirs' mode is masked by umask
-        return
-    if not stat.S_ISDIR(st.st_mode):
-        raise ValueError("expected a directory: %s" % path)
-    if st.st_uid != os.getuid():
-        raise ValueError("directory not owned by current user: %s" % path)
-    if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
-        os.chmod(path, 0o700)
+        fd = os.open(path, os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISDIR(st.st_mode):
+            raise ValueError("expected a directory: %s" % path)
+        if st.st_uid != os.getuid():
+            raise ValueError("directory not owned by current user: %s" % path)
+        if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            os.fchmod(fd, 0o700)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
 
 
-def _secure_read(path, max_bytes):
+def ensure_private_dir(path):
+    """Convenience wrapper for callers that only need the directory to exist
+    with the right ownership/permissions, not a held fd."""
+    os.close(open_private_dir(path))
+
+
+def mkstemp_at(dirfd, prefix=".tmp-", suffix=""):
+    """Create a randomly-named, exclusive, 0600 file relative to an
+    already-validated directory fd -- the dir_fd equivalent of
+    tempfile.mkstemp, which has no dir_fd support of its own."""
+    for _ in range(10):
+        name = "%s%08x%08x%s" % (prefix, random.getrandbits(32), random.getrandbits(32), suffix)
+        try:
+            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dirfd)
+            return fd, name
+        except FileExistsError:
+            continue
+    raise OSError("could not create a unique temp file")
+
+
+def _secure_read(path, max_bytes, require_secure=False):
     """Read a regular file without following symlinks, and without ever
     blocking on or exhausting memory against a FIFO/device/oversized file
-    planted at one of our predictable state paths."""
+    planted at one of our predictable state paths.
+
+    Every property checked -- type, owner, mode, size -- is checked on the
+    exact fd that gets read, all in one open, so nothing can be swapped in
+    between a separate check and a separate read.
+    """
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise ValueError("not a regular file: %s" % path)
+        if require_secure:
+            if st.st_uid != os.getuid():
+                raise ValueError("config not owned by current user: %s" % path)
+            if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                raise ValueError("config is group/world accessible: %s" % path)
         with os.fdopen(fd, "rb", closefd=True) as f:
             fd = None  # ownership transferred to the file object
             data = f.read(max_bytes + 1)
@@ -97,53 +164,46 @@ def _secure_read(path, max_bytes):
             os.close(fd)
 
 
-def _require_secure_file(path):
-    """Credentials live here: refuse anything but a regular file we own with
-    no group/other access, and refuse a symlink outright."""
-    st = os.lstat(path)
-    if not stat.S_ISREG(st.st_mode):
-        raise ValueError("config is not a regular file: %s" % path)
-    if st.st_uid != os.getuid():
-        raise ValueError("config not owned by current user: %s" % path)
-    if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
-        raise ValueError("config is group/world accessible: %s" % path)
-
-
 def load_json(path, default, max_bytes=MAX_STATE_BYTES, require_secure=False):
     try:
-        if require_secure:
-            _require_secure_file(path)
-        return json.loads(_secure_read(path, max_bytes))
+        return json.loads(_secure_read(path, max_bytes, require_secure=require_secure))
     except Exception:
         return default
 
 
 def save_json(path, data):
     """Atomic, symlink-safe write: random 0600 temp file in a private 0700
-    directory, fsync'd, then renamed over the target."""
+    directory, fsync'd, then renamed over the target -- creation and rename
+    both performed relative to a held directory fd so a directory swapped in
+    after validation can't redirect either one."""
+    d = os.path.dirname(path)
+    name = os.path.basename(path)
+    dirfd = None
+    fd = None
+    tmp = None
     try:
-        d = os.path.dirname(path)
-        ensure_private_dir(d)
+        dirfd = open_private_dir(d)
         payload = json.dumps(data).encode()
-        fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=d)
-        try:
-            with os.fdopen(fd, "wb", closefd=True) as f:
-                fd = None
-                f.write(payload)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, path)
-            tmp = None
-        finally:
-            if fd is not None:
-                os.close(fd)
-            if tmp is not None:
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    pass
+        fd, tmp = mkstemp_at(dirfd)
+        with os.fdopen(fd, "wb", closefd=True) as f:
+            fd = None
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, name, src_dir_fd=dirfd, dst_dir_fd=dirfd)
+        tmp = None
     except Exception:
         pass  # state is a convenience; losing it must never break a call
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if tmp is not None:
+            try:
+                os.unlink(tmp, dir_fd=dirfd)
+            except OSError:
+                pass
+        if dirfd is not None:
+            os.close(dirfd)
 
 
 def load_config():

@@ -7,17 +7,17 @@ mpv is ours, spawned by play.py, so control is a direct IPC command rather
 than a remote-control call to some other client.
 """
 
-import json
 import sys
 
 import mpvipc
+import subsonic
 
 SOCK_PATH = mpvipc.sock_path()
 ACTIONS = ("playpause", "next", "previous", "stop")
 
 
 def out(ok, **kw):
-    print(json.dumps({"ok": ok, **kw}))
+    subsonic.emit(ok, **kw)
     sys.exit(0 if ok else 1)
 
 
